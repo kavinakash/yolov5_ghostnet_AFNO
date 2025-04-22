@@ -4,7 +4,7 @@ A lightweight, real-time UAV object detection framework based on YOLOv5 architec
 
 ---
 
-## 🚀 Objectives of the Invention
+## Objectives of the Invention
 
 - Develop a **lightweight, real-time** UAV detection system with high accuracy and low GFLOPs.
 - Reduce computational complexity using **AFNO 2D** for frequency-aware feature extraction.
@@ -14,7 +14,7 @@ A lightweight, real-time UAV object detection framework based on YOLOv5 architec
 
 ---
 
-## 🧠 Working Principle
+## Working Principle
 
 This project integrates GhostNet and AFNO 2D into a modified YOLOv5 framework to enhance detection in aerial imagery:
 
@@ -44,13 +44,13 @@ This project integrates GhostNet and AFNO 2D into a modified YOLOv5 framework to
 
 ---
 
-## 📦 Key Features
+## Key Features
 
-- 🔬 **GhostNet Backbone** — Efficient feature map generation with fewer parameters.
-- 🧭 **AFNO 2D** — Global frequency-based feature enhancement.
-- 🔁 **SPPF & C3Ghost** — Better receptive field and feature refinement.
-- 🧩 **DWConv** — Efficient depthwise convolutions in the neck for fusion.
-- ⚡ **Real-time FPS** — Achieves 69 FPS with 6.6 GFLOPs on UAV platforms.
+-  **GhostNet Backbone** — Efficient feature map generation with fewer parameters.
+-  **AFNO 2D** — Global frequency-based feature enhancement.
+-  **SPPF & C3Ghost** — Better receptive field and feature refinement.
+-  **DWConv** — Efficient depthwise convolutions in the neck for fusion.
+-  **Real-time FPS** — Achieves 69 FPS with 6.6 GFLOPs on UAV platforms.
 
 - ![image](https://github.com/user-attachments/assets/3f5bd1a3-8f12-4e61-a86b-9a919e156fd5)
 
