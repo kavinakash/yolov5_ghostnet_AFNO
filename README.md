@@ -13,6 +13,13 @@ A lightweight, real-time UAV object detection framework based on YOLOv5 architec
 - Apply **robust data augmentation** (flip, mosaic, scale) to minimize false detections.
 
 ---
+## Dataset used:
+
+This project uses the drone-vs-bird Dataset provided by Roboflow Universe:
+
+dam. drone-vs-bird Dataset. Roboflow Universe, Mar. 2023. Available at: https://universe.roboflow.com/dam-tpuul/drone-vs-bird-lanzg
+
+---
 
 ## Working Principle
 
@@ -63,3 +70,5 @@ This project integrates GhostNet and AFNO 2D into a modified YOLOv5 framework to
 git clone https://github.com/kavinakash/yolov5_ghostnet_AFNO.git
 cd yolov5_ghostnet_AFNO
 pip install -r requirements.txt
+```
+
