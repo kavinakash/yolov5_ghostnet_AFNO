@@ -29,7 +29,6 @@ if platform.system() != "Windows":
 
 from models.common import *
 from models.experimental import *
-from models.pruned_common import *
 from utils.autoanchor import check_anchor_order
 from utils.general import LOGGER, check_version, check_yaml, colorstr, make_divisible, print_args
 from utils.plots import feature_visualization
@@ -187,7 +186,7 @@ class BaseModel(nn.Module):
         """
         self = super()._apply(fn)
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, Segment, Decoupled_Detect)):
+        if isinstance(m, (Detect, Segment)):
             m.stride = fn(m.stride)
             m.grid = list(map(fn, m.grid))
             if isinstance(m.anchor_grid, list):
@@ -198,7 +197,7 @@ class BaseModel(nn.Module):
 class DetectionModel(BaseModel):
     """YOLOv5 detection model class for object detection tasks, supporting custom configurations and anchors."""
 
-    def __init__(self, cfg="yolov5s.yaml", ch=3, nc=None, anchors=None, mask_bn=None):
+    def __init__(self, cfg="yolov5s.yaml", ch=3, nc=None, anchors=None):
         """Initializes YOLOv5 model with configuration file, input channels, number of classes, and custom anchors."""
         super().__init__()
         if isinstance(cfg, dict):
@@ -218,20 +217,13 @@ class DetectionModel(BaseModel):
         if anchors:
             LOGGER.info(f"Overriding model.yaml anchors with anchors={anchors}")
             self.yaml["anchors"] = round(anchors)  # override yaml value
-        
-        self.mask_bn = mask_bn
-        if self.mask_bn is not None:
-            self.model, self.save, self.from_to_map = parse_pruned_model(
-                self.mask_bn, deepcopy(self.yaml), ch=[ch])  # model, savelist
-        else:
-            self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist
-        
+        self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist
         self.names = [str(i) for i in range(self.yaml["nc"])]  # default names
         self.inplace = self.yaml.get("inplace", True)
 
         # Build strides, anchors
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, Segment, Decoupled_Detect)):
+        if isinstance(m, (Detect, Segment)):
 
             def _forward(x):
                 """Passes the input 'x' through the model and returns the processed output."""
@@ -309,102 +301,17 @@ class DetectionModel(BaseModel):
         """
         # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
         m = self.model[-1]  # Detect() module
-        if isinstance(m, Detect):
-            for mi, s in zip(m.m, m.stride):  # from
-                b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
-                b.data[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
-                b.data[:, 5 : 5 + m.nc] += (
-                    math.log(0.6 / (m.nc - 0.99999)) if cf is None else torch.log(cf / cf.sum())
-                )  # cls
-                mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
-        elif isinstance(m, Decoupled_Detect):
-            for mi, s in zip(m.m_conf, m.stride):  # from
-                b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
-                b.data += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
-                mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
-
-            for mi, s in zip(m.m_cls, m.stride):  # from
-                b = mi[-1].bias.view(m.na, -1)  # conv.bias(255) to (3,85)
-                b.data += math.log(0.6 / (m.nc - 0.99999)) if cf is None else torch.log(cf / cf.sum())  # cls
-                mi[-1].bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
-    
-    def _print_biases(self):
-        m = self.model[-1]  # Detect() module
-        for mi in m.m:  # from
-            b = mi.bias.detach().view(m.na, -1).T  # conv.bias(255) to (3,85)
-            LOGGER.info(
-                ('%6g Conv2d.bias:' + '%10.3g' * 6) % (mi.weight.shape[1], *b[:5].mean(1).tolist(), b[5:].mean()))
+        for mi, s in zip(m.m, m.stride):  # from
+            b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
+            b.data[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
+            b.data[:, 5 : 5 + m.nc] += (
+                math.log(0.6 / (m.nc - 0.99999)) if cf is None else torch.log(cf / cf.sum())
+            )  # cls
+            mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
 
 Model = DetectionModel  # retain YOLOv5 'Model' class for backwards compatibility
 
-class Decoupled_Detect(nn.Module):
-    # YOLOv5 Detect head for detection models
-    stride = None  # strides computed during build
-    dynamic = False  # force grid reconstruction
-    export = False  # export mode
-
-    def __init__(self, nc=80, anchors=(), ch=(), inplace=True):  # detection layer
-        super().__init__()
-        self.nc = nc  # number of classes
-        self.no = nc + 5  # number of outputs per anchor
-        self.nl = len(anchors)  # number of detection layers
-        self.na = len(anchors[0]) // 2  # number of anchors
-        self.grid = [torch.empty(0) for _ in range(self.nl)]  # init grid
-        self.anchor_grid = [torch.empty(0) for _ in range(self.nl)]  # init anchor grid
-        self.register_buffer('anchors', torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
-        self.m_stem = nn.ModuleList(nn.Sequential(DWConv2D(x, x, 1)) for x in ch)        # Replace Conv with PartialConv for classification
-        # self.m_stem = nn.ModuleList(nn.Sequential(nn.Conv2d(x, x, kernel_size=1, groups=x // 2)) for x in ch)
-
-        self.m_cls = nn.ModuleList(
-            nn.Sequential(PartialConv(x, n_div=4, kernel_size=3), nn.Conv2d(x, self.na * self.nc, 1)) for x in ch
-        )  # cls conv
-
-        # Replace Conv with PartialConv for reg_conf
-        self.m_reg_conf = nn.ModuleList(nn.Sequential(PartialConv(x, n_div=4, kernel_size=3))for x in ch)  # reg_conf stem conv
-        self.m_reg = nn.ModuleList(nn.Conv2d(x, self.na * 4, 1) for x in ch)  # reg conv
-        self.m_conf = nn.ModuleList(nn.Conv2d(x, self.na * 1, 1) for x in ch)  # conf conv
-        self.inplace = inplace  # use inplace ops (e.g. slice assignment)
-
-    def forward(self, x):
-        z = []  # inference output
-        for i in range(self.nl):
-            x[i] = self.m_stem[i](x[i])  # conv
-
-            bs, _, ny, nx = x[i].shape
-            x_cls = self.m_cls[i](x[i]).view(bs, self.na, self.nc, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
-            x_reg_conf = self.m_reg_conf[i](x[i])
-            x_reg = self.m_reg[i](x_reg_conf).view(bs, self.na, 4, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
-            x_conf = self.m_conf[i](x_reg_conf).view(bs, self.na, 1, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
-            x[i] = torch.cat([x_reg, x_conf, x_cls], dim=4)
-
-            if not self.training:  # inference
-                if self.dynamic or self.grid[i].shape[2:4] != x[i].shape[2:4]:
-                    self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
-
-                if isinstance(self, Segment):  # (boxes + masks)
-                    xy, wh, conf, mask = x[i].split((2, 2, self.nc + 1, self.no - self.nc - 5), 4)
-                    xy = (xy.sigmoid() * 2 + self.grid[i]) * self.stride[i]  # xy
-                    wh = (wh.sigmoid() * 2) ** 2 * self.anchor_grid[i]  # wh
-                    y = torch.cat((xy, wh, conf.sigmoid(), mask), 4)
-                else:  # Detect (boxes only)
-                    xy, wh, conf = x[i].sigmoid().split((2, 2, self.nc + 1), 4)
-                    xy = (xy * 2 + self.grid[i]) * self.stride[i]  # xy
-                    wh = (wh * 2) ** 2 * self.anchor_grid[i]  # wh
-                    y = torch.cat((xy, wh, conf), 4)
-                z.append(y.view(bs, self.na * nx * ny, self.no))
-
-        return x if self.training else (torch.cat(z, 1),) if self.export else (torch.cat(z, 1), x)
-
-    def _make_grid(self, nx=20, ny=20, i=0, torch_1_10=check_version(torch.__version__, '1.10.0')):
-        d = self.anchors[i].device
-        t = self.anchors[i].dtype
-        shape = 1, self.na, ny, nx, 2  # grid shape
-        y, x = torch.arange(ny, device=d, dtype=t), torch.arange(nx, device=d, dtype=t)
-        yv, xv = torch.meshgrid(y, x, indexing='ij') if torch_1_10 else torch.meshgrid(y, x)  # torch>=0.7 compatibility
-        grid = torch.stack((xv, yv), 2).expand(shape) - 0.5  # add grid offset, i.e. y = 2.0 * x - 0.5
-        anchor_grid = (self.anchors[i] * self.stride[i]).view((1, self.na, 1, 1, 2)).expand(shape)
-        return grid, anchor_grid
 
 class SegmentationModel(DetectionModel):
     """YOLOv5 segmentation model for object detection and segmentation tasks with configurable parameters."""
@@ -500,7 +407,6 @@ def parse_model(d, ch):
             SpatialAttention,
             PEAM,
             TransformerEncoder,
-            AFNO2D,
             h_sigmoid,
             h_swish,
             SELayer,
@@ -520,7 +426,7 @@ def parse_model(d, ch):
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
         # TODO: channel, gw, gd
-        elif m in {Detect, Segment, Decoupled_Detect}:
+        elif m in {Detect, Segment}:
             args.append([ch[x] for x in f])
             if isinstance(args[1], int):  # number of anchors
                 args[1] = [list(range(args[1] * 2))] * len(f)
@@ -545,270 +451,6 @@ def parse_model(d, ch):
         ch.append(c2)
     return nn.Sequential(*layers), sorted(save)
 
-def parse_pruned_model(mask_bn, d, ch):  # model_dict, input_channels(3)
-    LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
-    anchors, nc, gd, gw = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple']
-    na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
-    no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
-    ch = [3]
-    fromlayer = []  # last module bn layer name
-    from_to_map = {}
-    layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
-    for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
-        m = eval(m) if isinstance(m, str) else m  # eval strings
-        for j, a in enumerate(args):
-            try:
-                args[j] = eval(a) if isinstance(a, str) else a  # eval strings
-            except NameError:
-                pass
-
-        n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
-        named_m_base = "model.{}".format(i)
-        if m in [Conv]:
-            named_m_bn = named_m_base + ".bn"
-
-            bnc = int(mask_bn[named_m_bn].sum())
-            c1, c2 = ch[f], bnc
-            args = [c1, c2, *args[1:]]
-            layertmp = named_m_bn
-            if i > 0:
-                from_to_map[layertmp] = fromlayer[f]
-            fromlayer.append(named_m_bn)
-            
-        # Add handling for GhostConv
-        elif m in [GhostConv]:
-            named_m_cv1_bn = named_m_base + ".cv1.bn"
-            named_m_cv2_bn = named_m_base + ".cv2.bn"
-            
-            c1 = ch[f]
-            cv1out = int(mask_bn[named_m_cv1_bn].sum())
-            cv2out = int(mask_bn[named_m_cv2_bn].sum())
-            c2 = cv1out + cv2out  # GhostConv concatenates outputs
-            
-            args = [c1, c2, *args[1:]]
-            
-            if i > 0:
-                from_to_map[named_m_cv1_bn] = fromlayer[f]
-            from_to_map[named_m_cv2_bn] = named_m_cv1_bn
-            fromlayer.append(named_m_cv2_bn)
-        
-        # Add handling for GhostBottleneck
-        elif m in [GhostBottleneck]:
-            # Try both naming conventions and use the one that exists
-            potential_cv1_names = [
-                named_m_base + ".conv.0.cv1.bn",
-                named_m_base + ".0.conv.0.cv1.bn"
-            ]
-            
-            # Find the correct naming pattern
-            named_m_conv_0_cv1_bn = None
-            for name in potential_cv1_names:
-                if name in mask_bn:
-                    named_m_conv_0_cv1_bn = name
-                    break
-            
-            if named_m_conv_0_cv1_bn is None:
-                raise KeyError(f"Could not find any valid naming pattern for {named_m_base} GhostBottleneck")
-            
-            # Now determine the pattern to use for the other layers
-            if ".0.conv." in named_m_conv_0_cv1_bn:
-                pattern = ".0.conv."
-                named_m_conv_0_cv2_bn = named_m_base + ".0.conv.0.cv2.bn"
-                named_m_conv_2_cv1_bn = named_m_base + ".0.conv.2.cv1.bn"
-                named_m_conv_2_cv2_bn = named_m_base + ".0.conv.2.cv2.bn"
-            else:
-                pattern = ".conv."
-                named_m_conv_0_cv2_bn = named_m_base + ".conv.0.cv2.bn"
-                named_m_conv_2_cv1_bn = named_m_base + ".conv.2.cv1.bn"
-                named_m_conv_2_cv2_bn = named_m_base + ".conv.2.cv2.bn"
-            
-            c1 = ch[f]
-            # The channels after pruning
-            conv_0_cv1out = int(mask_bn[named_m_conv_0_cv1_bn].sum())
-            conv_0_cv2out = int(mask_bn[named_m_conv_0_cv2_bn].sum())
-            conv_2_cv1out = int(mask_bn[named_m_conv_2_cv1_bn].sum())
-            conv_2_cv2out = int(mask_bn[named_m_conv_2_cv2_bn].sum())
-            
-            c2 = conv_2_cv1out + conv_2_cv2out  # Final output channels
-            
-            # Create args for GhostBottleneck
-            args = [c1, c2, *args[1:]]
-            
-            if i > 0:
-                from_to_map[named_m_conv_0_cv1_bn] = fromlayer[f]
-            from_to_map[named_m_conv_0_cv2_bn] = named_m_conv_0_cv1_bn
-            from_to_map[named_m_conv_2_cv1_bn] = named_m_conv_0_cv2_bn
-            from_to_map[named_m_conv_2_cv2_bn] = named_m_conv_2_cv1_bn
-            
-            fromlayer.append(named_m_conv_2_cv2_bn)
-
-        elif m in [C3Pruned]:
-            named_m_cv1_bn = named_m_base + ".cv1.bn"
-            named_m_cv2_bn = named_m_base + ".cv2.bn"
-            named_m_cv3_bn = named_m_base + ".cv3.bn"
-            from_to_map[named_m_cv1_bn] = fromlayer[f]
-            from_to_map[named_m_cv2_bn] = fromlayer[f]
-            fromlayer.append(named_m_cv3_bn)
-
-            cv1in = ch[f]
-            cv1out = int(mask_bn[named_m_cv1_bn].sum())
-            cv2out = int(mask_bn[named_m_cv2_bn].sum())
-            cv3out = int(mask_bn[named_m_cv3_bn].sum())
-            args = [cv1in, cv1out, cv2out, cv3out, n, args[-1]]
-            bottle_args = []
-            chin = [cv1out]
-
-            c3fromlayer = [named_m_cv1_bn]
-            for p in range(n):
-                named_m_bottle_cv1_bn = named_m_base + ".m.{}.cv1.bn".format(p)
-                named_m_bottle_cv2_bn = named_m_base + ".m.{}.cv2.bn".format(p)
-                bottle_cv1in = chin[-1]
-                bottle_cv1out = int(mask_bn[named_m_bottle_cv1_bn].sum())
-                bottle_cv2out = int(mask_bn[named_m_bottle_cv2_bn].sum())
-                chin.append(bottle_cv2out)
-                bottle_args.append([bottle_cv1in, bottle_cv1out, bottle_cv2out])
-                from_to_map[named_m_bottle_cv1_bn] = c3fromlayer[p]
-                from_to_map[named_m_bottle_cv2_bn] = named_m_bottle_cv1_bn
-                c3fromlayer.append(named_m_bottle_cv2_bn)
-            args.insert(4, bottle_args)
-            c2 = cv3out
-            n = 1
-            from_to_map[named_m_cv3_bn] = [c3fromlayer[-1], named_m_cv2_bn]
-            
-        # Add handling for C3Ghost
-        elif m in [C3Ghost]:
-            named_m_cv1_bn = named_m_base + ".cv1.bn"
-            named_m_cv2_bn = named_m_base + ".cv2.bn"
-            named_m_cv3_bn = named_m_base + ".cv3.bn"
-            from_to_map[named_m_cv1_bn] = fromlayer[f]
-            from_to_map[named_m_cv2_bn] = fromlayer[f]
-            fromlayer.append(named_m_cv3_bn)
-
-            cv1in = ch[f]
-            cv1out = int(mask_bn[named_m_cv1_bn].sum())
-            cv2out = int(mask_bn[named_m_cv2_bn].sum())
-            cv3out = int(mask_bn[named_m_cv3_bn].sum())
-            args = [cv1in, cv1out, cv2out, cv3out, n, args[-1]]
-            bottle_args = []
-            chin = [cv1out]
-
-            c3fromlayer = [named_m_cv1_bn]
-            for p in range(n):
-                # Check both naming patterns for the inner GhostBottleneck modules
-                potential_inner_names = [
-                    named_m_base + ".m.{}.conv.0.cv1.bn".format(p),
-                    named_m_base + ".m.{}.0.conv.0.cv1.bn".format(p)
-                ]
-                
-                named_m_bottle_conv_0_cv1_bn = None
-                for name in potential_inner_names:
-                    if name in mask_bn:
-                        named_m_bottle_conv_0_cv1_bn = name
-                        break
-                
-                if named_m_bottle_conv_0_cv1_bn is None:
-                    raise KeyError(f"Could not find valid naming pattern for {named_m_base}.m.{p}")
-                
-                # Determine pattern based on the found name
-                if ".0.conv." in named_m_bottle_conv_0_cv1_bn:
-                    pattern = ".0.conv."
-                    named_m_bottle_conv_0_cv2_bn = named_m_base + f".m.{p}.0.conv.0.cv2.bn"
-                    named_m_bottle_conv_2_cv1_bn = named_m_base + f".m.{p}.0.conv.2.cv1.bn"
-                    named_m_bottle_conv_2_cv2_bn = named_m_base + f".m.{p}.0.conv.2.cv2.bn"
-                else:
-                    pattern = ".conv."
-                    named_m_bottle_conv_0_cv2_bn = named_m_base + f".m.{p}.conv.0.cv2.bn"
-                    named_m_bottle_conv_2_cv1_bn = named_m_base + f".m.{p}.conv.2.cv1.bn"
-                    named_m_bottle_conv_2_cv2_bn = named_m_base + f".m.{p}.conv.2.cv2.bn"
-                
-                bottle_cv1in = chin[-1]
-                bottle_cv1out = int(mask_bn[named_m_bottle_conv_0_cv1_bn].sum())
-                bottle_cv2out = int(mask_bn[named_m_bottle_conv_2_cv2_bn].sum())
-                chin.append(bottle_cv2out)
-                bottle_args.append([bottle_cv1in, bottle_cv1out, bottle_cv2out])
-                
-                from_to_map[named_m_bottle_conv_0_cv1_bn] = c3fromlayer[p]
-                from_to_map[named_m_bottle_conv_0_cv2_bn] = named_m_bottle_conv_0_cv1_bn
-                from_to_map[named_m_bottle_conv_2_cv1_bn] = named_m_bottle_conv_0_cv2_bn
-                from_to_map[named_m_bottle_conv_2_cv2_bn] = named_m_bottle_conv_2_cv1_bn
-                
-                c3fromlayer.append(named_m_bottle_conv_2_cv2_bn)
-                
-            args.insert(4, bottle_args)
-            c2 = cv3out
-            n = 1
-            from_to_map[named_m_cv3_bn] = [c3fromlayer[-1], named_m_cv2_bn]
-            
-        elif m in [DWConv2D]:
-            named_m_bn = named_m_base + ".bn"
-            c1 = ch[f]
-            c2 = int(mask_bn[named_m_bn].sum()) if named_m_bn in mask_bn else args[0]
-            
-            if len(args) > 1:
-                args = [c1, c2, *args[2:]]
-            else:
-                args = [c1, c2, 3, 1]
-            
-            if i > 0:
-                from_to_map[named_m_bn] = fromlayer[f]
-            fromlayer.append(named_m_bn)
-            
-        elif m in [AFNO2D]:
-            c1 = ch[f]
-            c2 = c1
-            args = [c1, *args[1:]] if len(args) > 0 else [c1]
-            
-            if i > 0:
-                fromlayer.append(fromlayer[f])
-            else:
-                fromlayer.append(None)
-                
-            
-        elif m in [SPPFPruned]:
-            named_m_cv1_bn = named_m_base + ".cv1.bn"
-            named_m_cv2_bn = named_m_base + ".cv2.bn"
-            cv1in = ch[f]
-            from_to_map[named_m_cv1_bn] = fromlayer[f]
-            from_to_map[named_m_cv2_bn] = [named_m_cv1_bn] * 4
-            fromlayer.append(named_m_cv2_bn)
-            cv1out = int(mask_bn[named_m_cv1_bn].sum())
-            cv2out = int(mask_bn[named_m_cv2_bn].sum())
-            args = [cv1in, cv1out, cv2out, *args[1:]]
-            c2 = cv2out
-
-        elif m is nn.BatchNorm2d:
-            args = [ch[f]]
-        elif m is Concat:
-            c2 = sum(ch[x] for x in f)
-            inputtmp = [fromlayer[x] for x in f]
-            fromlayer.append(inputtmp)
-        elif m is Detect:
-            from_to_map[named_m_base + ".m.0"] = fromlayer[f[0]]
-            from_to_map[named_m_base + ".m.1"] = fromlayer[f[1]]
-            from_to_map[named_m_base + ".m.2"] = fromlayer[f[2]]
-            args.append([ch[x] for x in f])
-            if isinstance(args[1], int):  # number of anchors
-                args[1] = [list(range(args[1] * 2))] * len(f)
-        elif m is Contract:
-            c2 = ch[f] * args[0] ** 2
-        elif m is Expand:
-            c2 = ch[f] // args[0] ** 2
-        else:
-            c2 = ch[f]
-            fromtmp = fromlayer[-1]
-            fromlayer.append(fromtmp)
-
-        m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
-        t = str(m)[8:-2].replace('__main__.', '')  # module type
-        np = sum(x.numel() for x in m_.parameters())  # number params
-        m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
-        LOGGER.info(f'{i:>3}{str(f):>18}{n_:>3}{np:10.0f}  {t:<40}{str(args):<30}')  # print
-        save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
-        layers.append(m_)
-        if i == 0:
-            ch = []
-        ch.append(c2)
-    return nn.Sequential(*layers), sorted(save), from_to_map
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

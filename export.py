@@ -68,6 +68,7 @@ if platform.system() != "Windows":
     ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from models.experimental import attempt_load
+# from models.yolo import Model, Detect
 from models.yolo import ClassificationModel, Detect, DetectionModel, SegmentationModel
 from utils.dataloaders import LoadImages
 from utils.general import (
@@ -1428,6 +1429,7 @@ def run(
             pipeline_coreml(ct_model, im, file, model.names, y, mlmodel)
     if any((saved_model, pb, tflite, edgetpu, tfjs)):  # TensorFlow formats
         assert not tflite or not tfjs, "TFLite and TF.js models must be exported separately, please pass only one type."
+#        assert not isinstance(model, Model), "ClassificationModel export to TF formats not yet supported."
         assert not isinstance(model, ClassificationModel), "ClassificationModel export to TF formats not yet supported."
         f[5], s_model = export_saved_model(
             model.cpu(),
@@ -1459,6 +1461,7 @@ def run(
     # Finish
     f = [str(x) for x in f if x]  # filter out '' and None
     if any(f):
+#        cls, det, seg = (isinstance(model, x) for x in (Model))  # type
         cls, det, seg = (isinstance(model, x) for x in (ClassificationModel, DetectionModel, SegmentationModel))  # type
         det &= not seg  # segmentation models inherit from SegmentationModel(DetectionModel)
         dir = Path("segment" if seg else "classify" if cls else "")
