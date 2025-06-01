@@ -32,11 +32,6 @@ This project introduces a UAV detection model based on YOLOv5, modified with:
   - Validation: 584  
   - Test: 292  
 
-**Preprocessing:**  
-- Resized to **640×640**  
-- Auto-orientation correction  
-- YOLO annotation format  
-
 ## Methodology
 
 - **Backbone:** YOLOv5 + GhostConv + GhostBottleneck  
@@ -48,7 +43,6 @@ This project introduces a UAV detection model based on YOLOv5, modified with:
 
 ## Key Highlights
 
-- Real-time detection on edge devices (embedded systems, UAV hardware)
 - Significant reduction in GFLOPs and parameters without sacrificing accuracy
 - Robust small-object detection in cluttered, dynamic backgrounds
 
