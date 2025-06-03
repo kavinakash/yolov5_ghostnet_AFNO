@@ -52,7 +52,6 @@ from utils.autobatch import check_train_batch_size
 from utils.callbacks import Callbacks
 from utils.dataloaders import create_dataloader
 from utils.downloads import attempt_download, is_url
-from utils.prune_utils import get_ignore_bn, get_bn_weights
 from utils.general import (
     LOGGER,
     TQDM_BAR_FORMAT,
@@ -214,12 +213,7 @@ def train(hyp, opt, device, callbacks):
         with torch_distributed_zero_first(LOCAL_RANK):
             weights = attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location="cpu")  # load checkpoint to CPU to avoid CUDA memory leak
-        if opt.ft_pruned_model:
-            srtmp = 0
-            model = Model(ckpt["model"].yaml, ch=3, nc=nc, anchors=hyp.get(
-                'anchors'), mask_bn=ckpt["model"].mask_bn).to(device)
-        else:
-            model = Model(cfg or ckpt["model"].yaml, ch=3, nc=nc, anchors=hyp.get("anchors")).to(device)  # create
+        model = Model(cfg or ckpt["model"].yaml, ch=3, nc=nc, anchors=hyp.get("anchors")).to(device)  # create
         exclude = ["anchor"] if (cfg or hyp.get("anchors")) and not resume else []  # exclude keys
         csd = ckpt["model"].float().state_dict()  # checkpoint state_dict as FP32
         csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
@@ -269,7 +263,7 @@ def train(hyp, opt, device, callbacks):
 
     # Resume
     best_fitness, start_epoch = 0.0, 0
-    if pretrained and not opt.ft_pruned_model:
+    if pretrained:
         if resume:
             best_fitness, start_epoch, epochs = smart_resume(ckpt, optimizer, ema, weights, epochs, resume)
         del ckpt, csd
@@ -368,10 +362,6 @@ def train(hyp, opt, device, callbacks):
         f"Logging results to {colorstr('bold', save_dir)}\n"
         f"Starting training for {epochs} epochs..."
     )
-    
-    if opt.bn_sparsity or opt.ft_pruned_model:
-        ignore_bn_list = get_ignore_bn(model)
-    
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         callbacks.run("on_train_epoch_start")
         model.train()
@@ -417,60 +407,29 @@ def train(hyp, opt, device, callbacks):
                 if sf != 1:
                     ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]  # new shape (stretched to gs-multiple)
                     imgs = nn.functional.interpolate(imgs, size=ns, mode="bilinear", align_corners=False)
-            
-            # Sparsity Training
-            if opt.bn_sparsity:
-                # Forward
 
+            # Forward
+            with torch.amp.autocast(device_type='cuda', enabled=amp):
                 pred = model(imgs)  # forward
-
                 loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
-
                 if RANK != -1:
                     loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode
                 if opt.quad:
-                    loss *= 4.
-                # Backward
-                loss.backward()
+                    loss *= 4.0
 
-                # From pytorch sliming, l1 norm add in bn weight(grad add sign(weight))
-                srtmp = opt.sparsity_rate * (1 - 0.9 * epoch / epochs)
-                for k, m in model.named_modules():
-                    if isinstance(m, nn.BatchNorm2d) and (k not in ignore_bn_list):
-                        m.weight.grad.data.add_(
-                            srtmp * torch.sign(m.weight.data))  # L1
-                        m.bias.grad.data.add_(
-                            opt.sparsity_rate * 10 * torch.sign(m.bias.data))  # L1
+            # Backward
+            scaler.scale(loss).backward()
 
-                # Optimize
-                optimizer.step()
+            # Optimize - https://pytorch.org/docs/master/notes/amp_examples.html
+            if ni - last_opt_step >= accumulate:
+                scaler.unscale_(optimizer)  # unscale gradients
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)  # clip gradients
+                scaler.step(optimizer)  # optimizer.step
+                scaler.update()
                 optimizer.zero_grad()
                 if ema:
                     ema.update(model)
-
-            else:
-                # Forward
-                with torch.amp.autocast(device_type='cuda', enabled=amp):
-                    pred = model(imgs)  # forward
-                    loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
-                    if RANK != -1:
-                        loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode
-                    if opt.quad:
-                        loss *= 4.0
-
-                # Backward
-                scaler.scale(loss).backward()
-
-                # Optimize - https://pytorch.org/docs/master/notes/amp_examples.html
-                if ni - last_opt_step >= accumulate:
-                    scaler.unscale_(optimizer)  # unscale gradients
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)  # clip gradients
-                    scaler.step(optimizer)  # optimizer.step
-                    scaler.update()
-                    optimizer.zero_grad()
-                    if ema:
-                        ema.update(model)
-                    last_opt_step = ni
+                last_opt_step = ni
 
             # Log
             if RANK in {-1, 0}:
@@ -488,10 +447,6 @@ def train(hyp, opt, device, callbacks):
         # Scheduler
         lr = [x["lr"] for x in optimizer.param_groups]  # for loggers
         scheduler.step()
-        
-        if opt.bn_sparsity or opt.ft_pruned_model:
-            # Show BN weight distribution
-            bn_weights = get_bn_weights(model, ignore_bn_list)   
 
         if RANK in {-1, 0}:
             # mAP
@@ -518,8 +473,6 @@ def train(hyp, opt, device, callbacks):
             stop = stopper(epoch=epoch, fitness=fi)  # early stop check
             if fi > best_fitness:
                 best_fitness = fi
-            if opt.bn_sparsity or opt.ft_pruned_model:
-                log_vals = list(mloss) + list(results) + lr + [srtmp]
             log_vals = list(mloss) + list(results) + lr
             callbacks.run("on_fit_epoch_end", log_vals, epoch, best_fitness, fi)
 
@@ -655,12 +608,6 @@ def parse_opt(known=False):
     parser.add_argument("--upload_dataset", nargs="?", const=True, default=False, help='Upload data, "val" option')
     parser.add_argument("--bbox_interval", type=int, default=-1, help="Set bounding-box image logging interval")
     parser.add_argument("--artifact_alias", type=str, default="latest", help="Version of dataset artifact to use")
-
-    # Sparsity training
-    parser.add_argument('--bn_sparsity', action='store_true', help='train with L1 sparsity normalization')
-    parser.add_argument('--sparsity_rate', type=float, default=0.0001, help='L1 normal sparse rate')
-    parser.add_argument('--ft_pruned_model', action='store_true', help='finetune pruned model')
-    opt = parser.parse_known_args()[0] if known else parser.parse_args()
 
     # NDJSON logging
     parser.add_argument("--ndjson-console", action="store_true", help="Log ndjson to console")

@@ -1,21 +1,7 @@
-path: K:/environment/ObjectDetection/dataset/
-train: train/images
-val: valid/images
-test: test/images
-
+names:
+- '0'
+- '1'
 nc: 2
-names: ['0', '1']
-
-# roboflow:
-#   workspace: dam-tpuul
-#   project: drone-vs-bird-lanzg
-#   version: 2
-#   license: CC BY 4.0
-#   url: https://universe.roboflow.com/dam-tpuul/drone-vs-bird-lanzg/dataset/2
-
-# names:
-#   - drone
-# nc: 1
-# path: K:/environment/ObjectDetection/dataset/
-# train: train/images
-# val: valid/images
+test: test/images
+train: /kaggle/input/bvddata2/train/images
+val: /kaggle/input/bvddata2/valid/images

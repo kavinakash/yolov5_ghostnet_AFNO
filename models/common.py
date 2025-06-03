@@ -1301,7 +1301,6 @@ class PEAM(nn.Module):
         output = self.conv1x1(output)
         return output
 
-
 class TransformerEncoder(nn.Module):
     def __init__(self, c1, c2, *args, **kwargs):
         super(TransformerEncoder, self).__init__()
