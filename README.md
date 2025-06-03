@@ -54,17 +54,27 @@ This project introduces a UAV detection model based on YOLOv5, modified with:
 
 ```bash
 # Clone repo
-git clone https://github.com/your_username/uav-detection-lightweight.git
-cd uav-detection-lightweight
+git clone https://github.com/kavinakash/yolov5_ghostnet_AFNO.git
+cd yolov5_ghostnet_AFNO
 
 # Install dependencies
 pip install -r requirements.txt
 
 # Train
-python train.py --img 640 --batch 16 --epochs 150 --data uav.yaml --cfg models/yv5_ghostnet_afno.yaml --weights '' --name uav_detector
+python train.py --img 640 --batch 32 --epochs 200 \
+                                --data /kaggle/working/data.yaml \
+                                --cfg models/yv5_gh.yaml \
+                                --weights '' \
+                                --name yv5_gh_d2 \
+                                --hyp data/hyps/hyp.scratch-low.yaml \
+                                --optimizer AdamW \
+                                --cos-lr \
+                                --device 0
 
 # Inference
-python detect.py --weights runs/train/uav_detector/weights/best.pt --img 640 --source your_video_or_image_path
+python detect.py --weights runs/train/yv5_gh_d2/weights/best.pt \
+            --source sample.jpg \
+            --conf-thres 0.25 --img 640 --name yv5_gh_d2 --device 0
 
 
 
