@@ -10,7 +10,7 @@ This project introduces a UAV detection model based on YOLOv5, modified with:
 - **GhostNet** for lightweight feature extraction
 - **AFNO 2D** for global and local frequency-aware features
 - **SPPF**, **C3 Ghost**, and **DWConv** for efficient multi-scale feature aggregation
-- Aggressive data augmentation to improve generalization and suppress false positives
+- view the config yaml file here models/yv5_gh.yaml
 
 ![Picture1](https://github.com/user-attachments/assets/3dd8768b-1c08-4a37-97ae-c0449f5ec79c)
 
@@ -23,14 +23,20 @@ This project introduces a UAV detection model based on YOLOv5, modified with:
 | Yv5_Mobilenet + PEAM     | 7.9     | 4,767,911     | 80         | 78.5    | 78     | 38.6       | 57  |
 | **Yv5_GhostNet + AFNO (Ours)** | **6.6**     | **2,686,527**  | **84.2**     | **78.9**  | **80.4** | **42.8**     | **69** |
 
-## Dataset
+## Datasets used
 
 - **Source:** [Drone vs Bird Dataset (Roboflow Universe)](https://universe.roboflow.com/dam-tpuul/drone-vs-bird-lanzg)
 - **Classes:** 2 (Drone, Bird)
 - **Images:** 2,920  
   - Train: 2,044  
   - Validation: 584  
-  - Test: 292  
+  - Test: 292
+ 
+- **Source:** [Small Aerial Object Detection Dataset (Roboflow Universe)](https://universe.roboflow.com/milind-ashok-dadore/small-aerial-objectdetection-fwbd7)  
+- **Classes:** 3 (Drone, Bird, Plane)  
+- **Images:** 4,477  
+  - Train: 3,581  
+  - Validation: 896  
 
 ## Methodology
 
