@@ -14,15 +14,6 @@ This project introduces a UAV detection model based on YOLOv5, modified with:
 
 ![Picture1](https://github.com/user-attachments/assets/3dd8768b-1c08-4a37-97ae-c0449f5ec79c)
 
-## 📊 Performance
-
-| MODELS                  | GFLOPs | PARAMETERS | PRECISION | RECALL | mAP 50 | mAP 50-95 | FPS |
-|:------------------------|:--------|:-------------|:------------|:--------|:--------|:------------|:-----|
-| YOLOv5s                  | 16.6    | 7,235,389     | 89         | 79.2    | 79     | 42.7       | 48  |
-| Yv5_Shufflenet + PEAM    | 6.9     | 4,278,475     | 77         | 76.4    | 76     | 38.3       | 65  |
-| Yv5_Mobilenet + PEAM     | 7.9     | 4,767,911     | 80         | 78.5    | 78     | 38.6       | 57  |
-| **Yv5_GhostNet + AFNO (Ours)** | **6.6**     | **2,686,527**  | **84.2**     | **78.9**  | **80.4** | **42.8**     | **69** |
-
 ## Datasets used
 
 - **Source:** [Drone vs Bird Dataset (Roboflow Universe)](https://universe.roboflow.com/dam-tpuul/drone-vs-bird-lanzg)
@@ -51,6 +42,24 @@ This project introduces a UAV detection model based on YOLOv5, modified with:
 
 - Significant reduction in GFLOPs and parameters without sacrificing accuracy
 - Robust small-object detection in cluttered, dynamic backgrounds
+
+## 📊 Performance on Drone vs Bird Dataset
+
+| MODELS                  | GFLOPs | PARAMETERS | PRECISION | RECALL | mAP 50 | mAP 50-95 | FPS |
+|:------------------------|:--------|:-------------|:------------|:--------|:--------|:------------|:-----|
+| YOLOv5s                  | 16.6    | 7,235,389     | 89         | 79.2    | 79     | 42.7       | 48  |
+| Yv5_Shufflenet + PEAM    | 6.9     | 4,278,475     | 77         | 76.4    | 76     | 38.3       | 65  |
+| Yv5_Mobilenet + PEAM     | 7.9     | 4,767,911     | 80         | 78.5    | 78     | 38.6       | 57  |
+| **Yv5_GhostNet + AFNO (Ours)** | **6.6**     | **2,686,527**  | **84.2**     | **78.9**  | **80.4** | **42.8**     | **69** |
+
+## 📊 Performance on Small Aerial Object Detection Dataset
+
+| MODELS                  | GFLOPs | PARAMETERS | PRECISION | RECALL | mAP 50 | mAP 50-95 | FPS |
+|:------------------------|:--------|:-------------|:------------|:--------|:--------|:------------|:-----|
+| YOLOv5s                  | 16.6    | 7,235,389     | 87.6         | 86.2    | 89.7     | 44.6       | 40  |
+| Yv5_Shufflenet + PEAM    | 6.9     | 4,278,475     | 90.1         | 90.3    | 93.1     | 50.2       | 34  |
+| Yv5_Mobilenet + PEAM     | 7.9     | 4,767,911     | 88           | 90.4    | 92       | 48.5       | 36  |
+| **Yv5_GhostNet + AFNO (Ours)** | **6.6**     | **2,686,527**  | **92.9**     | **93.3**  | **95.5** | **54.5**     | **53** |
 
 ## Inference
 
